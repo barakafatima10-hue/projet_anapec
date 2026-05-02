@@ -29,92 +29,197 @@ const MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin",
 
 // ── Migration automatique de la base au démarrage ────────────
 async function initDB() {
-
-  // 1. Ajouter la colonne saisi_par à realisations si elle manque
+  console.log("Starting Database Initialization...");
+  
+  // Create tables in order of dependencies
   try {
-    const cols = await q(`
-      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME   = 'realisations'
-        AND COLUMN_NAME  = 'saisi_par'
+    // 1. utilisateurs
+    await q(`
+      CREATE TABLE IF NOT EXISTS utilisateurs (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        nom varchar(100) NOT NULL,
+        prenom varchar(100) NOT NULL,
+        email varchar(150) NOT NULL,
+        mot_de_passe varchar(255) NOT NULL,
+        role enum('directeur','conseiller') NOT NULL DEFAULT 'conseiller',
+        date_creation timestamp NOT NULL DEFAULT current_timestamp(),
+        actif tinyint(1) NOT NULL DEFAULT 1,
+        PRIMARY KEY (id),
+        UNIQUE KEY email (email)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-    if (!cols.length) {
-      await q("ALTER TABLE realisations ADD COLUMN saisi_par INT NULL");
-      await q("ALTER TABLE realisations ADD CONSTRAINT fk_real_user FOREIGN KEY (saisi_par) REFERENCES utilisateurs(id)");
-      console.log("✓ Colonne saisi_par ajoutée à realisations");
-    } else {
-      console.log("✓ Colonne saisi_par OK");
+
+    // Seed default users if empty
+    const users = await q("SELECT id FROM utilisateurs LIMIT 1");
+    if (users.length === 0) {
+      await q(`
+        INSERT INTO utilisateurs (nom, prenom, email, mot_de_passe, role) VALUES 
+        ('El ghzale','Soufiane','soufiane@anapec.ma','soufiane123','directeur'),
+        ('folane','yassine','yassine@gmail.com','yassine123','conseiller'),
+        ('Imrane','salma','salma@gmail.com','salma123','conseiller')
+      `);
+      console.log("✓ Default users seeded");
     }
-  } catch(e) {
-    // FK déjà existante ou autre erreur non bloquante
-    console.log("✓ realisations (migration ignorée):", e.message.substring(0, 60));
-  }
 
-  // 2. Mettre à jour la UNIQUE KEY pour inclure saisi_par
-  try {
-    try { await q("ALTER TABLE realisations DROP INDEX uq_real"); } catch {}
-    try { await q("ALTER TABLE realisations DROP CONSTRAINT uq_real"); } catch {}
-    // We intentionally don't recreate uq_real here because our custom UPSERT logic in POST /api/realisations already prevents duplicates and is much safer!
-    console.log("✓ Ancienne contrainte uq_real nettoyée (logique gérée côté code)");
-  } catch(e) {
-    console.log("✓ UNIQUE KEY (ignorée):", e.message.substring(0, 60));
-  }
+    // 2. categories
+    await q(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        code varchar(50) NOT NULL,
+        label varchar(100) NOT NULL,
+        couleur varchar(10) NOT NULL DEFAULT '#185FA5',
+        PRIMARY KEY (id),
+        UNIQUE KEY code (code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
 
-  // 3. Créer la table activities si elle n'existe pas
-  try {
+    // Seed categories if empty
+    const cats = await q("SELECT id FROM categories LIMIT 1");
+    if (cats.length === 0) {
+      await q(`
+        INSERT INTO categories (code, label, couleur) VALUES 
+        ('inscription','Inscription','#185FA5'),
+        ('accompagnement','Accompagnement','#1D9E75'),
+        ('insertion','Insertions','#D85A30'),
+        ('entrepreneuriat','Entrepreneuriat','#BA7517'),
+        ('international','Mobilité Internationale','#533AB7'),
+        ('formation','Formation','#3B6D11'),
+        ('employeurs','Employeurs','#993556')
+      `);
+      console.log("✓ Categories seeded");
+    }
+
+    // 3. indicateurs
+    await q(`
+      CREATE TABLE IF NOT EXISTS indicateurs (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        nom varchar(255) NOT NULL,
+        categorie_id int(11) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY nom (nom),
+        KEY fk_ind_cat (categorie_id),
+        CONSTRAINT fk_ind_cat FOREIGN KEY (categorie_id) REFERENCES categories (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+
+    // Seed indicateurs if empty
+    const inds = await q("SELECT id FROM indicateurs LIMIT 1");
+    if (inds.length === 0) {
+      await q(`
+        INSERT INTO indicateurs (nom, categorie_id) VALUES 
+        ('Inscription des Chercheurs d\\'Emploi',1),('Entretien de Positionnement',2),('Ateliers de recherche d\\'emploi',2),
+        ('IDMAJ (hors PI) & TAHFIZ',3),('CIA',3),('CDC',3),('TAHFIZ',3),('PCS',3),('Insertion via Placement à l\\'International',3),
+        ('Insertion via l\\'entreprenariat',3),('Accompagnement des Porteurs de Projet',4),('Création D\\'Entreprises',4),
+        ('TPE accompagnées techniquement avec renforcement des capacités',4),('Auto Entrepreneurs appuyés',4),
+        ('UEI promues à l\\'autoentrepreneuriat & appuyées à la formalisation',4),('Nombre de candidats insérés (départ effectif)',5),
+        ('Nombre de travailleur saisonniers agricoles accompagnés (ateliers d\\'appui, sensibilisation, information, …)',5),
+        ('Nombre de bénéficiaires de prestations d\\'accompagnement à la mobilité internationale autre que les ouvriers agricoles (ateliers, entretiens, ..)',5),
+        ('Nombre de candidats pré sélectionnés autres que les ouvriers agricoles',5),('Nombre de candidats pré sélectionnés dans le cadre de recrutement des étrangers',5),
+        ('TAEHIL',6),('Formation Secteurs Emergents',6),('Formations partenariales',6),('Effectif Postes à pourvoir',7),
+        ('Nbre d\\'employeurs contactés',7),('Nbre de nouveau clients',7),('Nbre d\\'employeur bénéficiaire',7)
+      `);
+      console.log("✓ Indicateurs seeded");
+    }
+
+    // 4. objectifs
+    await q(`
+      CREATE TABLE IF NOT EXISTS objectifs (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        indicateur_id int(11) NOT NULL,
+        annee year(4) NOT NULL,
+        valeur int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_obj (indicateur_id,annee),
+        CONSTRAINT fk_obj_ind FOREIGN KEY (indicateur_id) REFERENCES indicateurs (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+
+    // 5. realisations
+    await q(`
+      CREATE TABLE IF NOT EXISTS realisations (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        indicateur_id int(11) NOT NULL,
+        annee year(4) NOT NULL,
+        mois tinyint(4) NOT NULL,
+        valeur_cumul int(11) NOT NULL DEFAULT 0,
+        created_at timestamp NOT NULL DEFAULT current_timestamp(),
+        updated_at timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+        saisi_par int(11) DEFAULT NULL,
+        PRIMARY KEY (id),
+        KEY fk_real_user (saisi_par),
+        KEY idx_fk_indicateur (indicateur_id),
+        CONSTRAINT fk_real_ind FOREIGN KEY (indicateur_id) REFERENCES indicateurs (id),
+        CONSTRAINT fk_real_user FOREIGN KEY (saisi_par) REFERENCES utilisateurs (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+
+    // 6. activities
     await q(`
       CREATE TABLE IF NOT EXISTS activities (
-        id            INT     NOT NULL AUTO_INCREMENT,
-        conseiller_id INT     NOT NULL,
-        action_type   ENUM('create','update','delete') NOT NULL,
-        module        VARCHAR(80)  NOT NULL DEFAULT 'realisation',
-        detail        VARCHAR(255) NULL,
-        created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+        id int(11) NOT NULL AUTO_INCREMENT,
+        conseiller_id int(11) NOT NULL,
+        action_type enum('create','update','delete') NOT NULL,
+        module varchar(80) NOT NULL DEFAULT 'realisation',
+        detail varchar(255) DEFAULT NULL,
+        created_at timestamp NOT NULL DEFAULT current_timestamp(),
         PRIMARY KEY (id),
         KEY idx_act_conseiller (conseiller_id),
-        KEY idx_act_date       (created_at),
-        CONSTRAINT fk_act_user_init FOREIGN KEY (conseiller_id)
-          REFERENCES utilisateurs(id) ON DELETE CASCADE
-      ) ENGINE=InnoDB
+        KEY idx_act_date (created_at),
+        CONSTRAINT fk_act_user_init FOREIGN KEY (conseiller_id) REFERENCES utilisateurs (id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     `);
-    console.log("✓ Table activities OK");
-  } catch(e) {
-    if (!e.message.includes("Duplicate key name")) {
-      console.error("Init activities:", e.message);
-    }
-  }
 
-  // 4. Créer la table notifications si elle n'existe pas, et ajouter type_message
-  try {
+    // 7. notifications
     await q(`
       CREATE TABLE IF NOT EXISTS notifications (
-        id           INT          NOT NULL AUTO_INCREMENT,
-        user_id      INT          NOT NULL,
-        titre        VARCHAR(150) NOT NULL,
-        message      TEXT         NOT NULL,
-        lu           TINYINT(1)   DEFAULT 0,
-        created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-        type_message VARCHAR(50)  DEFAULT 'information',
+        id int(11) NOT NULL AUTO_INCREMENT,
+        user_id int(11) NOT NULL,
+        titre varchar(150) NOT NULL,
+        message text NOT NULL,
+        lu tinyint(1) DEFAULT 0,
+        created_at timestamp NOT NULL DEFAULT current_timestamp(),
+        type_message varchar(50) DEFAULT 'information',
         PRIMARY KEY (id),
         KEY idx_notif_user (user_id),
-        CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES utilisateurs(id) ON DELETE CASCADE
-      ) ENGINE=InnoDB
+        CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES utilisateurs (id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     `);
-    
-    const cols = await q(`
-      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME   = 'notifications'
-        AND COLUMN_NAME  = 'type_message'
+
+    // 8. alertes
+    await q(`
+      CREATE TABLE IF NOT EXISTS alertes (
+        id INT NOT NULL AUTO_INCREMENT,
+        indicateur_id INT NOT NULL,
+        annee YEAR NOT NULL,
+        mois TINYINT NOT NULL,
+        type_alerte VARCHAR(50) NOT NULL,
+        taux_realisation DECIMAL(5,1) DEFAULT 0,
+        seuil INT DEFAULT 60,
+        message VARCHAR(500) NULL,
+        lu TINYINT(1) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_alerte_ind (indicateur_id),
+        CONSTRAINT fk_alerte_ind FOREIGN KEY (indicateur_id) REFERENCES indicateurs(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
-    if (!cols.length) {
-      await q("ALTER TABLE notifications ADD COLUMN type_message VARCHAR(50) DEFAULT 'information'");
-      console.log("✓ Colonne type_message ajoutée à notifications");
-    } else {
-      console.log("✓ Table notifications OK");
-    }
-  } catch(e) {
-    console.log("✓ Migration notifications ignorée:", e.message.substring(0, 60));
+
+    // 9. View
+    try {
+      await q(`
+        CREATE OR REPLACE VIEW v_realisations_detail AS 
+        select r.annee AS annee, r.mois AS mois, i.nom AS indicateur_nom, c.label AS categorie, r.valeur_cumul AS valeur_cumul,
+        coalesce(r.valeur_cumul - lag(r.valeur_cumul,1) over (partition by r.indicateur_id, r.annee order by r.mois), r.valeur_cumul) AS valeur_mois,
+        o.valeur AS objectif_annuel, round(r.valeur_cumul * 100.0 / nullif(o.valeur,0),1) AS taux_pct 
+        from (((realisations r join indicateurs i on(i.id = r.indicateur_id)) join categories c on(c.id = i.categorie_id)) 
+        left join objectifs o on(o.indicateur_id = r.indicateur_id and o.annee = r.annee))
+      `);
+      console.log("✓ View created");
+    } catch(e) { console.log("View creation skipped/failed:", e.message); }
+
+    console.log("✓ Database Initialization Completed Successfully!");
+  } catch (e) {
+    console.error("Database Initialization ERROR:", e.message);
   }
 }
 
