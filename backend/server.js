@@ -16,7 +16,10 @@ const pool = mysql.createPool({
   database: (process.env.DB_NAME || "anapec_tdb").trim(),
   waitForConnections: true,
   connectionLimit: 10,
-  charset: "utf8mb4"
+  charset: "utf8mb4",
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 async function q(sql, params=[]) {
