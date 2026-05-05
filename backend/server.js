@@ -9,11 +9,11 @@ app.use(cors());
 app.use(express.json());
 
 const pool = mysql.createPool({
-  host:     process.env.DB_HOST     || "localhost",
-  port:     process.env.DB_PORT     || 3306,
-  user:     process.env.DB_USER     || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME     || "anapec_tdb",
+  host:     (process.env.DB_HOST || "localhost").trim(),
+  port:     Number(process.env.DB_PORT) || 3306,
+  user:     (process.env.DB_USER || "root").trim(),
+  password: (process.env.DB_PASSWORD || "").trim(),
+  database: (process.env.DB_NAME || "anapec_tdb").trim(),
   waitForConnections: true,
   connectionLimit: 10,
   charset: "utf8mb4"
@@ -885,5 +885,9 @@ app.get("/api/health", async (req, res) => {
 // ── Démarrage ────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`ANAPEC API v2.1 → http://localhost:${PORT}`);
-  await initDB(); // Migration auto : saisi_par + UNIQUE KEY + activities
+  try {
+    await initDB(); 
+  } catch(e) {
+    console.error("Database Init failed on startup:", e.message);
+  }
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 
-const API = "https://backend-kappa-ten-20.vercel.app/api";
+const API = "https://projetanapec-production.up.railway.app/api";
 const C = {
   violet:"#7B2D8B", gold:"#F5A623", white:"#fff",
   light:"#F0EBF4", border:"#E8D8EC", dark:"#4A1A57", muted:"#9B7AA8",
